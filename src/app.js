@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import pg from "pg";
 import Joi from "joi";
+import dayjs from "dayjs";
+pg.types.setTypeParser(1082, (str) => str);
 
 const app = express();
 const { Pool } = pg;
@@ -96,6 +98,167 @@ app.post("/games", async (req, res) => {
     res.sendStatus(201);
   } catch (e) {
     console.log(e);
+    res.sendStatus(400);
+  }
+});
+
+app.get("/customers", async (req, res) => {
+  try {
+    let customers;
+    let cpfQuery = req.query.cpf;
+    if (cpfQuery !== undefined) {
+      cpfQuery = cpfQuery + "%";
+      customers = await connection.query(
+        `
+        SELECT * FROM customers
+        ${cpfQuery !== undefined ? `WHERE cpf ILIKE $1` : ""}
+        `,
+        [cpfQuery]
+      );
+    } else {
+      customers = await connection.query(
+        `
+        SELECT * FROM customers
+        `
+      );
+    }
+
+    res.send(customers.rows);
+  } catch (e) {
+    console.log(e);
+    res.sendStatus(500);
+  }
+});
+app.get("/customers/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const customer = await connection.query(
+      `SELECT * FROM customers WHERE customers.id = $1`,
+      [id]
+    );
+    if (customer.rowCount === 0) {
+      return res.sendStatus(404);
+    }
+    res.send(customer.rows); //Esta sem parseInt
+  } catch {
+    res.sendStatus(500);
+  }
+});
+
+app.post("/customers", async (req, res) => {
+  try {
+    const customerSchema = Joi.object({
+      name: Joi.string().required(),
+      phone: Joi.string().pattern(/[0-9]/).required().min(10).max(11),
+      cpf: Joi.string().pattern(/[0-9]/).min(11).max(11),
+      birthday: Joi.string().pattern(/^[0-9]{4}\-[0-9]{2}\-[0-9]{2}$/),
+    });
+    const { name, phone, cpf, birthday } = await customerSchema.validateAsync(
+      req.body
+    );
+    const sameCpf = await connection.query(
+      `SELECT cpf FROM customers WHERE cpf = $1`,
+      [cpf]
+    );
+    if (sameCpf.rowCount > 0) {
+      res.sendStatus(409);
+    }
+    await connection.query(
+      `INSERT INTO customers (name, phone, cpf, birthday) VALUES ($1, $2, $3, $4)`,
+      [name, phone, cpf, birthday]
+    );
+    res.sendStatus(201);
+  } catch (e) {
+    console.log(e);
+    res.sendStatus(500);
+  }
+});
+app.put("/customers/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const costumerSchema = Joi.object({
+      name: Joi.string().required(),
+      phone: Joi.string().pattern(/[0-9]/).required().min(10).max(11),
+      cpf: Joi.string().pattern(/[0-9]/).min(11).max(11),
+      birthday: Joi.string().pattern(/^[0-9]{4}\-[0-9]{2}\-[0-9]{2}$/),
+    });
+    const { name, phone, cpf, birthday } = await customerSchema.validateAsync(
+      req.body
+    );
+    const sameCpf = await connection.query(
+      `SELECT cpf FROM customers WHERE cpf = $1 AND id <> $2`,
+      [cpf, id]
+    );
+    if (sameCpf.rowCount > 0) {
+      res.sendStatus(409);
+    }
+    await connection.query(
+      `UPDATE customers SET name = $1, phone = $2, birthday = $3 WHERE = cpf = $4`,
+      [name, phone, birthday, cpf]
+    );
+    res.sendStatus(200);
+  } catch {
+    res.sendStatus(500);
+  }
+});
+app.get("/rentals", async (req, res) => {
+  try {
+    const rentals = await connection.query("SELECT * FROM rentals");
+    res.send(rentals.rows);
+  } catch {
+    res.sendStatus(500);
+  }
+});
+app.post("/rentals", async (req, res) => {
+  try {
+    const rental = req.body;
+    const validationCustomer = await connection.query(
+      `
+    SELECT id FROM customers WHERE id = $1
+    `,
+      [req.body.customerId]
+    );
+    const validationGame = await connection.query(
+      `
+    SELECT id FROM games WHERE id = $1
+    `,
+      [req.body.gameId]
+    );
+    if (
+      validationCustomer.rowCount === 0 ||
+      validationGame.rowCount === 0 ||
+      req.body.daysRented === 0
+    ) {
+      return sendStatus(400);
+    }
+    rental.rentDate = dayjs().format("YYYY-MM-DD");
+    rental.returnDate = null;
+    rental.delayFee = null;
+    const price = await connection.query(
+      `
+      SELECT * FROM games WHERE id = $1
+    `,
+      [rental.gameId]
+    );
+    rental.originalPrice =
+      rental.daysRented * parseInt(price.rows[0].pricePerDay);
+    await connection.query(
+      `INSERT INTO rentals 
+      ("customerId", "gameId", "daysRented", "rentDate", "returnDate", "delayFee", "originalPrice") 
+      VALUES($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        rental.customerId,
+        rental.gameId,
+        rental.daysRented,
+        rental.rentDate,
+        rental.returnDate,
+        rental.delayFee,
+        rental.originalPrice,
+      ]
+    );
+
+    res.send(rental);
+  } catch {
     res.sendStatus(400);
   }
 });
